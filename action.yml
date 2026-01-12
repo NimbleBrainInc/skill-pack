@@ -167,7 +167,7 @@ runs:
           fi
 
           echo "✓ Valid: $skill_name"
-          ((VALID_COUNT++))
+          VALID_COUNT=$((VALID_COUNT + 1))
         done <<< "$DIRS"
 
         # Output warnings
@@ -244,7 +244,7 @@ runs:
           BUNDLE_PATHS+=("$BUNDLE_PATH")
           BUNDLE_INFO+=("{\"name\":\"$skill_name\",\"version\":\"$VERSION\",\"path\":\"$BUNDLE_PATH\",\"sha256\":\"$SHA256\",\"size\":$SIZE}")
 
-          ((PACKED_COUNT++))
+          PACKED_COUNT=$((PACKED_COUNT + 1))
         done <<< "$DIRS"
 
         echo "count=$PACKED_COUNT" >> $GITHUB_OUTPUT
@@ -279,7 +279,7 @@ runs:
           echo "Uploading $(basename "$bundle_path") to release $TAG"
           gh release upload "$TAG" "$bundle_path" --clobber
 
-          ((UPLOADED++))
+          UPLOADED=$((UPLOADED + 1))
         done <<< "$PATHS"
 
         echo "count=$UPLOADED" >> $GITHUB_OUTPUT
@@ -399,11 +399,11 @@ runs:
 
             if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
               echo "✓ Announced: $SCOPED_NAME@$VERSION"
-              ((ANNOUNCED++))
+              ANNOUNCED=$((ANNOUNCED + 1))
               break
             elif [ "$HTTP_CODE" -eq 409 ]; then
               echo "✓ Already announced: $SCOPED_NAME@$VERSION"
-              ((ANNOUNCED++))
+              ANNOUNCED=$((ANNOUNCED + 1))
               break
             elif echo "$BODY" | grep -q "not found in release" && [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
               WAIT=$((ATTEMPT * 5))
