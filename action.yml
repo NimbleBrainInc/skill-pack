@@ -89,9 +89,9 @@ runs:
         echo "Discovered ${#SKILLS[@]} skill(s)"
         echo "count=${#SKILLS[@]}" >> $GITHUB_OUTPUT
 
-        # Output as JSON arrays
-        NAMES_JSON=$(printf '%s\n' "${SKILLS[@]}" | jq -R . | jq -s .)
-        DIRS_JSON=$(printf '%s\n' "${SKILL_DIRS[@]}" | jq -R . | jq -s .)
+        # Output as JSON arrays (compact to avoid newline issues)
+        NAMES_JSON=$(printf '%s\n' "${SKILLS[@]}" | jq -R . | jq -sc .)
+        DIRS_JSON=$(printf '%s\n' "${SKILL_DIRS[@]}" | jq -R . | jq -sc .)
         echo "names=$NAMES_JSON" >> $GITHUB_OUTPUT
         echo "dirs=$DIRS_JSON" >> $GITHUB_OUTPUT
 
@@ -249,12 +249,12 @@ runs:
 
         echo "count=$PACKED_COUNT" >> $GITHUB_OUTPUT
 
-        # Output paths as JSON
-        PATHS_JSON=$(printf '%s\n' "${BUNDLE_PATHS[@]}" | jq -R . | jq -s .)
+        # Output paths as JSON (compact to avoid newline issues)
+        PATHS_JSON=$(printf '%s\n' "${BUNDLE_PATHS[@]}" | jq -R . | jq -sc .)
         echo "paths=$PATHS_JSON" >> $GITHUB_OUTPUT
 
-        # Output bundle info as JSON
-        INFO_JSON=$(printf '%s\n' "${BUNDLE_INFO[@]}" | jq -s .)
+        # Output bundle info as JSON (compact)
+        INFO_JSON=$(printf '%s\n' "${BUNDLE_INFO[@]}" | jq -sc .)
         echo "info=$INFO_JSON" >> $GITHUB_OUTPUT
 
         echo "Packed $PACKED_COUNT skill(s)"
