@@ -1,0 +1,422 @@
+name: "Skill Pack"
+description: "Package Agent Skills into .skill bundles, upload to releases, and announce to registry"
+author: "NimbleBrain Inc"
+
+branding:
+  icon: "zap"
+  color: "purple"
+
+inputs:
+  directory:
+    description: "Directory to search for skills (looks for SKILL.md files)"
+    required: false
+    default: "."
+  pattern:
+    description: "Glob pattern to find skill directories (default: looks for SKILL.md)"
+    required: false
+    default: "**/SKILL.md"
+  build:
+    description: "Whether to build .skill bundles"
+    required: false
+    default: "true"
+  upload:
+    description: "Whether to upload bundles to the GitHub release (requires release event)"
+    required: false
+    default: "true"
+  announce:
+    description: "Whether to announce skills to the registry"
+    required: false
+    default: "true"
+  announce-url:
+    description: "URL of the mpak registry announce endpoint"
+    required: false
+    default: "https://api.mpak.dev/v1/skills/announce"
+  fail-on-warning:
+    description: "Fail the action if validation warnings are found"
+    required: false
+    default: "false"
+
+outputs:
+  skills-found:
+    description: "Number of skills discovered"
+    value: ${{ steps.discover.outputs.count }}
+  skills-packed:
+    description: "Number of skills successfully packed"
+    value: ${{ steps.pack.outputs.count }}
+  skills-announced:
+    description: "Number of skills announced to registry"
+    value: ${{ steps.announce.outputs.count }}
+  bundle-paths:
+    description: "JSON array of bundle paths"
+    value: ${{ steps.pack.outputs.paths }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Discover skills
+      id: discover
+      shell: bash
+      run: |
+        cd "${{ inputs.directory }}"
+
+        echo "Discovering skills..."
+        SKILLS=()
+        SKILL_DIRS=()
+
+        # Find all SKILL.md files
+        while IFS= read -r -d '' skill_file; do
+          skill_dir=$(dirname "$skill_file")
+          skill_name=$(basename "$skill_dir")
+
+          # Skip hidden directories and node_modules
+          if [[ "$skill_dir" == *"/."* ]] || [[ "$skill_dir" == *"node_modules"* ]]; then
+            continue
+          fi
+
+          echo "Found skill: $skill_name at $skill_dir"
+          SKILLS+=("$skill_name")
+          SKILL_DIRS+=("$skill_dir")
+        done < <(find . -name "SKILL.md" -type f -print0 2>/dev/null)
+
+        if [ ${#SKILLS[@]} -eq 0 ]; then
+          echo "::warning::No skills found matching pattern"
+          echo "count=0" >> $GITHUB_OUTPUT
+          echo "names=[]" >> $GITHUB_OUTPUT
+          echo "dirs=[]" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        echo "Discovered ${#SKILLS[@]} skill(s)"
+        echo "count=${#SKILLS[@]}" >> $GITHUB_OUTPUT
+
+        # Output as JSON arrays
+        NAMES_JSON=$(printf '%s\n' "${SKILLS[@]}" | jq -R . | jq -s .)
+        DIRS_JSON=$(printf '%s\n' "${SKILL_DIRS[@]}" | jq -R . | jq -s .)
+        echo "names=$NAMES_JSON" >> $GITHUB_OUTPUT
+        echo "dirs=$DIRS_JSON" >> $GITHUB_OUTPUT
+
+    - name: Validate skills
+      id: validate
+      if: steps.discover.outputs.count != '0'
+      shell: bash
+      run: |
+        cd "${{ inputs.directory }}"
+
+        VALID_COUNT=0
+        INVALID_COUNT=0
+        WARNINGS=()
+
+        # Parse the discovered directories
+        DIRS=$(echo '${{ steps.discover.outputs.dirs }}' | jq -r '.[]')
+
+        while IFS= read -r skill_dir; do
+          [ -z "$skill_dir" ] && continue
+
+          skill_name=$(basename "$skill_dir")
+          skill_md="$skill_dir/SKILL.md"
+
+          echo "Validating: $skill_name"
+
+          # Check SKILL.md exists (should always be true since we found it)
+          if [ ! -f "$skill_md" ]; then
+            echo "::error::SKILL.md not found in $skill_dir"
+            ((INVALID_COUNT++))
+            continue
+          fi
+
+          # Extract frontmatter using awk
+          FRONTMATTER=$(awk '/^---$/{if(f)exit;f=1;next}f' "$skill_md")
+
+          if [ -z "$FRONTMATTER" ]; then
+            echo "::error::No frontmatter found in $skill_md"
+            ((INVALID_COUNT++))
+            continue
+          fi
+
+          # Check required fields (name, description)
+          NAME=$(echo "$FRONTMATTER" | grep -E "^name:" | head -1 | sed 's/^name:[[:space:]]*//')
+          DESC=$(echo "$FRONTMATTER" | grep -E "^description:" | head -1 | sed 's/^description:[[:space:]]*//')
+
+          if [ -z "$NAME" ]; then
+            echo "::error::Missing 'name' field in $skill_md frontmatter"
+            ((INVALID_COUNT++))
+            continue
+          fi
+
+          if [ -z "$DESC" ]; then
+            echo "::error::Missing 'description' field in $skill_md frontmatter"
+            ((INVALID_COUNT++))
+            continue
+          fi
+
+          # Validate name matches directory
+          if [ "$NAME" != "$skill_name" ]; then
+            echo "::error::Skill name '$NAME' does not match directory name '$skill_name'"
+            ((INVALID_COUNT++))
+            continue
+          fi
+
+          # Check for metadata (warning only)
+          if ! echo "$FRONTMATTER" | grep -q "^metadata:"; then
+            WARNINGS+=("$skill_name: No metadata field - consider adding for better discovery")
+          fi
+
+          # Check for version in metadata (warning only)
+          if ! echo "$FRONTMATTER" | grep -q "version:"; then
+            WARNINGS+=("$skill_name: No version in metadata")
+          fi
+
+          echo "✓ Valid: $skill_name"
+          ((VALID_COUNT++))
+        done <<< "$DIRS"
+
+        # Output warnings
+        for warn in "${WARNINGS[@]}"; do
+          echo "::warning::$warn"
+        done
+
+        echo "valid=$VALID_COUNT" >> $GITHUB_OUTPUT
+        echo "invalid=$INVALID_COUNT" >> $GITHUB_OUTPUT
+
+        if [ $INVALID_COUNT -gt 0 ]; then
+          echo "::error::$INVALID_COUNT skill(s) failed validation"
+          exit 1
+        fi
+
+        if [ "${{ inputs.fail-on-warning }}" = "true" ] && [ ${#WARNINGS[@]} -gt 0 ]; then
+          echo "::error::${#WARNINGS[@]} warning(s) found and fail-on-warning is enabled"
+          exit 1
+        fi
+
+        echo "All $VALID_COUNT skill(s) validated successfully"
+
+    - name: Pack skills
+      id: pack
+      if: inputs.build == 'true' && steps.discover.outputs.count != '0'
+      shell: bash
+      run: |
+        cd "${{ inputs.directory }}"
+
+        PACKED_COUNT=0
+        BUNDLE_PATHS=()
+        BUNDLE_INFO=()
+
+        DIRS=$(echo '${{ steps.discover.outputs.dirs }}' | jq -r '.[]')
+
+        while IFS= read -r skill_dir; do
+          [ -z "$skill_dir" ] && continue
+
+          skill_name=$(basename "$skill_dir")
+          skill_md="$skill_dir/SKILL.md"
+
+          echo "Packing: $skill_name"
+
+          # Extract version from frontmatter
+          FRONTMATTER=$(awk '/^---$/{if(f)exit;f=1;next}f' "$skill_md")
+          VERSION=$(echo "$FRONTMATTER" | grep -E "^[[:space:]]*version:" | head -1 | sed 's/.*version:[[:space:]]*//' | tr -d '"'"'")
+
+          if [ -z "$VERSION" ]; then
+            VERSION="0.0.0"
+            echo "::warning::No version found for $skill_name, using 0.0.0"
+          fi
+
+          BUNDLE_NAME="${skill_name}-${VERSION}.skill"
+
+          # Create zip bundle
+          # The .skill bundle should contain: skill_name/SKILL.md, skill_name/...
+          (cd "$(dirname "$skill_dir")" && zip -r "$BUNDLE_NAME" "$(basename "$skill_dir")" -x "*.git*" -x "*node_modules*" -x "*.DS_Store")
+
+          BUNDLE_PATH="$(dirname "$skill_dir")/$BUNDLE_NAME"
+
+          # Calculate SHA256
+          if command -v shasum &> /dev/null; then
+            SHA256=$(shasum -a 256 "$BUNDLE_PATH" | cut -d' ' -f1)
+          else
+            SHA256=$(sha256sum "$BUNDLE_PATH" | cut -d' ' -f1)
+          fi
+
+          # Get size
+          SIZE=$(stat -f%z "$BUNDLE_PATH" 2>/dev/null || stat -c%s "$BUNDLE_PATH")
+
+          echo "✓ Created: $BUNDLE_NAME ($SIZE bytes)"
+          echo "  SHA256: $SHA256"
+
+          BUNDLE_PATHS+=("$BUNDLE_PATH")
+          BUNDLE_INFO+=("{\"name\":\"$skill_name\",\"version\":\"$VERSION\",\"path\":\"$BUNDLE_PATH\",\"sha256\":\"$SHA256\",\"size\":$SIZE}")
+
+          ((PACKED_COUNT++))
+        done <<< "$DIRS"
+
+        echo "count=$PACKED_COUNT" >> $GITHUB_OUTPUT
+
+        # Output paths as JSON
+        PATHS_JSON=$(printf '%s\n' "${BUNDLE_PATHS[@]}" | jq -R . | jq -s .)
+        echo "paths=$PATHS_JSON" >> $GITHUB_OUTPUT
+
+        # Output bundle info as JSON
+        INFO_JSON=$(printf '%s\n' "${BUNDLE_INFO[@]}" | jq -s .)
+        echo "info=$INFO_JSON" >> $GITHUB_OUTPUT
+
+        echo "Packed $PACKED_COUNT skill(s)"
+
+    - name: Upload to release
+      id: upload
+      if: inputs.upload == 'true' && inputs.build == 'true' && github.event_name == 'release' && steps.pack.outputs.count != '0'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        cd "${{ inputs.directory }}"
+
+        TAG="${{ github.event.release.tag_name }}"
+        UPLOADED=0
+
+        PATHS=$(echo '${{ steps.pack.outputs.paths }}' | jq -r '.[]')
+
+        while IFS= read -r bundle_path; do
+          [ -z "$bundle_path" ] && continue
+
+          echo "Uploading $(basename "$bundle_path") to release $TAG"
+          gh release upload "$TAG" "$bundle_path" --clobber
+
+          ((UPLOADED++))
+        done <<< "$PATHS"
+
+        echo "count=$UPLOADED" >> $GITHUB_OUTPUT
+        echo "Uploaded $UPLOADED bundle(s) to release $TAG"
+
+    - name: Get OIDC Token
+      id: oidc
+      if: inputs.announce == 'true' && steps.pack.outputs.count != '0'
+      shell: bash
+      run: |
+        TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://www.mpak.dev" | jq -r '.value')
+
+        if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
+          echo "::error::Failed to get OIDC token. Ensure 'permissions: id-token: write' is set."
+          exit 1
+        fi
+
+        echo "::add-mask::$TOKEN"
+        echo "token=$TOKEN" >> $GITHUB_OUTPUT
+
+    - name: Announce skills
+      id: announce
+      if: inputs.announce == 'true' && steps.pack.outputs.count != '0'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+      run: |
+        cd "${{ inputs.directory }}"
+
+        ANNOUNCED=0
+        DIRS=$(echo '${{ steps.discover.outputs.dirs }}' | jq -r '.[]')
+        BUNDLE_INFO='${{ steps.pack.outputs.info }}'
+
+        # Get release info
+        if [ "${{ github.event_name }}" = "release" ]; then
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          PRERELEASE="${{ github.event.release.prerelease }}"
+        else
+          RELEASE_TAG="${{ github.ref_name }}"
+          PRERELEASE="false"
+        fi
+
+        # Get repo owner for scoped name
+        REPO_OWNER=$(echo "${{ github.repository }}" | cut -d'/' -f1 | tr '[:upper:]' '[:lower:]')
+
+        while IFS= read -r skill_dir; do
+          [ -z "$skill_dir" ] && continue
+
+          skill_name=$(basename "$skill_dir")
+          skill_md="$skill_dir/SKILL.md"
+          SCOPED_NAME="@${REPO_OWNER}/${skill_name}"
+
+          echo "Announcing: $SCOPED_NAME"
+
+          # Extract frontmatter as JSON
+          FRONTMATTER=$(awk '/^---$/{if(f)exit;f=1;next}f' "$skill_md")
+
+          # Get bundle info for this skill
+          INFO=$(echo "$BUNDLE_INFO" | jq -r ".[] | select(.name == \"$skill_name\")")
+          VERSION=$(echo "$INFO" | jq -r '.version')
+          SHA256=$(echo "$INFO" | jq -r '.sha256')
+          SIZE=$(echo "$INFO" | jq -r '.size')
+          FILENAME="${skill_name}-${VERSION}.skill"
+
+          # Build frontmatter JSON (simple key extraction)
+          NAME=$(echo "$FRONTMATTER" | grep -E "^name:" | head -1 | sed 's/^name:[[:space:]]*//')
+          DESC=$(echo "$FRONTMATTER" | grep -E "^description:" | head -1 | sed 's/^description:[[:space:]]*//')
+
+          # Build the skill JSON for announce
+          SKILL_JSON=$(jq -n \
+            --arg name "$NAME" \
+            --arg description "$DESC" \
+            '{name: $name, description: $description}')
+
+          # Build announce payload
+          PAYLOAD=$(jq -n \
+            --arg name "$SCOPED_NAME" \
+            --arg version "$VERSION" \
+            --argjson skill "$SKILL_JSON" \
+            --arg release_tag "$RELEASE_TAG" \
+            --argjson prerelease "$PRERELEASE" \
+            --arg filename "$FILENAME" \
+            --arg sha256 "$SHA256" \
+            --argjson size "$SIZE" \
+            '{
+              name: $name,
+              version: $version,
+              skill: $skill,
+              release_tag: $release_tag,
+              prerelease: $prerelease,
+              artifact: {
+                filename: $filename,
+                sha256: $sha256,
+                size: $size
+              }
+            }')
+
+          echo "Payload:"
+          echo "$PAYLOAD" | jq .
+
+          # Retry loop for API propagation
+          MAX_ATTEMPTS=4
+          ATTEMPT=1
+
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${{ inputs.announce-url }}" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $OIDC_TOKEN" \
+              -d "$PAYLOAD")
+
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+
+            echo "HTTP Status: $HTTP_CODE (attempt $ATTEMPT/$MAX_ATTEMPTS)"
+
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+              echo "✓ Announced: $SCOPED_NAME@$VERSION"
+              ((ANNOUNCED++))
+              break
+            elif [ "$HTTP_CODE" -eq 409 ]; then
+              echo "✓ Already announced: $SCOPED_NAME@$VERSION"
+              ((ANNOUNCED++))
+              break
+            elif echo "$BODY" | grep -q "not found in release" && [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+              WAIT=$((ATTEMPT * 5))
+              echo "⏳ Asset not yet visible, retrying in ${WAIT}s..."
+              sleep $WAIT
+              ATTEMPT=$((ATTEMPT + 1))
+            else
+              echo "::error::Failed to announce $SCOPED_NAME (HTTP $HTTP_CODE)"
+              echo "$BODY" | jq . 2>/dev/null || echo "$BODY"
+              break
+            fi
+          done
+        done <<< "$DIRS"
+
+        echo "count=$ANNOUNCED" >> $GITHUB_OUTPUT
+        echo "Announced $ANNOUNCED skill(s)"
