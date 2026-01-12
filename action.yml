@@ -312,6 +312,7 @@ runs:
         cd "${{ inputs.directory }}"
 
         ANNOUNCED=0
+        FAILED=0
         DIRS=$(echo '${{ steps.discover.outputs.dirs }}' | jq -r '.[]')
         BUNDLE_INFO='${{ steps.pack.outputs.info }}'
 
@@ -413,6 +414,7 @@ runs:
             else
               echo "::error::Failed to announce $SCOPED_NAME (HTTP $HTTP_CODE)"
               echo "$BODY" | jq . 2>/dev/null || echo "$BODY"
+              FAILED=$((FAILED + 1))
               break
             fi
           done
@@ -420,3 +422,8 @@ runs:
 
         echo "count=$ANNOUNCED" >> $GITHUB_OUTPUT
         echo "Announced $ANNOUNCED skill(s)"
+
+        if [ $FAILED -gt 0 ]; then
+          echo "::error::$FAILED skill(s) failed to announce"
+          exit 1
+        fi
