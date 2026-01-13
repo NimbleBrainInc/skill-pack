@@ -341,11 +341,7 @@ runs:
           FRONTMATTER_YAML=$(awk '/^---$/{if(f)exit;f=1;next}f' "$skill_md")
 
           # Parse YAML to JSON, flattening metadata into top level
-          SKILL_JSON=$(echo "$FRONTMATTER_YAML" | yq -o=json '
-            . as $root |
-            (if .metadata then .metadata else {} end) *
-            ($root | del(.metadata))
-          ')
+          SKILL_JSON=$(echo "$FRONTMATTER_YAML" | yq -o=json '. * .metadata | del(.metadata)')
 
           # Get bundle info for this skill
           INFO=$(echo "$BUNDLE_INFO" | jq -r ".[] | select(.name == \"$skill_name\")")
