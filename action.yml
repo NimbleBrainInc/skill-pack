@@ -53,15 +53,6 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-
-    - name: Install PyYAML
-      shell: bash
-      run: pip install pyyaml
-
     - name: Discover skills
       id: discover
       shell: bash
@@ -346,19 +337,15 @@ runs:
 
           echo "Announcing: $SCOPED_NAME"
 
-          # Extract frontmatter YAML and convert to JSON
+          # Extract frontmatter YAML and convert to JSON using yq (pre-installed on runners)
           FRONTMATTER_YAML=$(awk '/^---$/{if(f)exit;f=1;next}f' "$skill_md")
 
-          # Convert YAML frontmatter to JSON using Python (always available)
-          SKILL_JSON=$(echo "$FRONTMATTER_YAML" | python3 -c "
-import sys, json, yaml
-data = yaml.safe_load(sys.stdin)
-# Flatten metadata into top-level for the skill object
-if 'metadata' in data:
-    metadata = data.pop('metadata')
-    data.update(metadata)
-print(json.dumps(data))
-")
+          # Parse YAML to JSON, flattening metadata into top level
+          SKILL_JSON=$(echo "$FRONTMATTER_YAML" | yq -o=json '
+            . as $root |
+            (if .metadata then .metadata else {} end) *
+            ($root | del(.metadata))
+          ')
 
           # Get bundle info for this skill
           INFO=$(echo "$BUNDLE_INFO" | jq -r ".[] | select(.name == \"$skill_name\")")
