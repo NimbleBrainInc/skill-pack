@@ -340,8 +340,8 @@ runs:
           # Extract frontmatter YAML and convert to JSON using yq (pre-installed on runners)
           FRONTMATTER_YAML=$(awk '/^---$/{if(f)exit;f=1;next}f' "$skill_md")
 
-          # Parse YAML to JSON, flattening metadata into top level
-          SKILL_JSON=$(echo "$FRONTMATTER_YAML" | yq -o=json '. * .metadata | del(.metadata)')
+          # Parse YAML to JSON (keep metadata nested as server expects skill.metadata)
+          SKILL_JSON=$(echo "$FRONTMATTER_YAML" | yq -o=json '.')
 
           # Get bundle info for this skill
           INFO=$(echo "$BUNDLE_INFO" | jq -r ".[] | select(.name == \"$skill_name\")")
