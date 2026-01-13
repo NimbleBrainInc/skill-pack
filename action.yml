@@ -53,6 +53,15 @@ outputs:
 runs:
   using: "composite"
   steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install PyYAML
+      shell: bash
+      run: pip install pyyaml
+
     - name: Discover skills
       id: discover
       shell: bash
@@ -337,8 +346,19 @@ runs:
 
           echo "Announcing: $SCOPED_NAME"
 
-          # Extract frontmatter as JSON
-          FRONTMATTER=$(awk '/^---$/{if(f)exit;f=1;next}f' "$skill_md")
+          # Extract frontmatter YAML and convert to JSON
+          FRONTMATTER_YAML=$(awk '/^---$/{if(f)exit;f=1;next}f' "$skill_md")
+
+          # Convert YAML frontmatter to JSON using Python (always available)
+          SKILL_JSON=$(echo "$FRONTMATTER_YAML" | python3 -c "
+import sys, json, yaml
+data = yaml.safe_load(sys.stdin)
+# Flatten metadata into top-level for the skill object
+if 'metadata' in data:
+    metadata = data.pop('metadata')
+    data.update(metadata)
+print(json.dumps(data))
+")
 
           # Get bundle info for this skill
           INFO=$(echo "$BUNDLE_INFO" | jq -r ".[] | select(.name == \"$skill_name\")")
@@ -346,16 +366,6 @@ runs:
           SHA256=$(echo "$INFO" | jq -r '.sha256')
           SIZE=$(echo "$INFO" | jq -r '.size')
           FILENAME="${skill_name}-${VERSION}.skill"
-
-          # Build frontmatter JSON (simple key extraction)
-          NAME=$(echo "$FRONTMATTER" | grep -E "^name:" | head -1 | sed 's/^name:[[:space:]]*//')
-          DESC=$(echo "$FRONTMATTER" | grep -E "^description:" | head -1 | sed 's/^description:[[:space:]]*//')
-
-          # Build the skill JSON for announce
-          SKILL_JSON=$(jq -n \
-            --arg name "$NAME" \
-            --arg description "$DESC" \
-            '{name: $name, description: $description}')
 
           # Build announce payload
           PAYLOAD=$(jq -n \
