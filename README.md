@@ -58,7 +58,7 @@ my-skills-repo/
 | `build` | Whether to build .skill bundles | `true` |
 | `upload` | Whether to upload to GitHub release | `true` |
 | `announce` | Whether to announce to registry | `true` |
-| `announce-url` | Registry announce endpoint | `https://api.mpak.dev/v1/skills/announce` |
+| `announce-url` | Registry announce endpoint | `https://registry.mpak.dev/v1/skills/announce` |
 | `fail-on-warning` | Fail if validation warnings found | `false` |
 
 ### Outputs

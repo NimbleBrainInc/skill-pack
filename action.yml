@@ -30,7 +30,7 @@ inputs:
   announce-url:
     description: "URL of the mpak registry announce endpoint"
     required: false
-    default: "https://api.mpak.dev/v1/skills/announce"
+    default: "https://registry.mpak.dev/v1/skills/announce"
   fail-on-warning:
     description: "Fail the action if validation warnings are found"
     required: false
@@ -291,7 +291,7 @@ runs:
       shell: bash
       run: |
         TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://www.mpak.dev" | jq -r '.value')
+          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://mpak.dev" | jq -r '.value')
 
         if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
           echo "::error::Failed to get OIDC token. Ensure 'permissions: id-token: write' is set."
